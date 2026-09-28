@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "longhorizon-harness": {
+      "command": "lh-harness",
+      "args": ["mcp-server"],
+      "env": {
+        "LH_HARNESS_CONFIG": "./.lh-harness/config.toml"
+      }
+    }
+  }
+}

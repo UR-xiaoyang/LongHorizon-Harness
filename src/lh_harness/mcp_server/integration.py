@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from ..adapters.base import AgentAdapter
-from ..agent_registry import get_agent_adapter
 from ..environment.base import Environment
 from ..environment.local import LocalEnvironment
 from ..manager import _run_impl
@@ -42,18 +41,19 @@ class HarnessIntegration:
             # Build HarnessConfig
             config = self._build_harness_config(task)
 
-            # Get agent adapters
-            agent_type = task.metadata.get("config", {}).get("agent", "claude_code")
-            model = task.metadata.get("config", {}).get("model", "claude-opus-5")
-
             # Create environment
             env = LocalEnvironment(workspace_path=task.workspace)
 
-            # Get agent adapter
-            agent = get_agent_adapter(
-                agent=agent_type,
+            # Get agent configuration
+            agent_type = task.metadata.get("config", {}).get("agent", "claude_code")
+            model = task.metadata.get("config", {}).get("model", "claude-opus-5")
+
+            # Create agent adapter using the same method as CLI
+            agent = self._build_agent(
+                name=agent_type,
                 model=model,
                 workspace_path=task.workspace,
+                prompt_dir=str(config.harness_dir),
             )
 
             # For now, create a simplified single-round execution
@@ -174,6 +174,76 @@ class HarnessIntegration:
         }
 
         return result
+
+    def _build_agent(
+        self,
+        name: str,
+        model: str | None,
+        workspace_path: str,
+        prompt_dir: str,
+    ) -> AgentAdapter:
+        """Build an agent adapter.
+
+        Args:
+            name: Agent name (claude_code, codex, etc.)
+            model: Model name
+            workspace_path: Workspace path
+            prompt_dir: Prompt directory
+
+        Returns:
+            AgentAdapter instance
+        """
+        if name == "claude_code":
+            from ..adapters.claude_code import ClaudeCodeAdapter
+
+            kwargs = {
+                "workspace_path": workspace_path,
+                "prompt_dir": prompt_dir,
+                "role": "cli_executor",  # Default role
+            }
+            if model:
+                kwargs["model"] = model
+
+            return ClaudeCodeAdapter(**kwargs)
+
+        elif name == "codex":
+            from ..adapters.codex import CodexAdapter
+
+            kwargs = {
+                "workspace_path": workspace_path,
+                "prompt_dir": prompt_dir,
+            }
+            if model:
+                kwargs["model"] = model
+
+            return CodexAdapter(**kwargs)
+
+        elif name == "opencode":
+            from ..adapters.opencode import OpenCodeAdapter
+
+            kwargs = {
+                "workspace_path": workspace_path,
+                "prompt_dir": prompt_dir,
+            }
+            if model:
+                kwargs["model"] = model
+
+            return OpenCodeAdapter(**kwargs)
+
+        elif name == "deepseek_harness":
+            from ..adapters.deepseek_harness import DeepSeekHarnessAdapter
+
+            kwargs = {
+                "workspace_path": workspace_path,
+                "prompt_dir": prompt_dir,
+            }
+            if model:
+                kwargs["model"] = model
+
+            return DeepSeekHarnessAdapter(**kwargs)
+
+        else:
+            raise ValueError(f"Unknown agent: {name}")
 
 
 def create_harness_integration(state_root: str = "~/.lh-harness") -> HarnessIntegration:

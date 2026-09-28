@@ -697,6 +697,12 @@ def main(argv: list[str] | None = None) -> int:
     # MCP Server command
     mcp_server_parser = add_command("mcp-server", "Start LongHorizon-Harness as an MCP server")
     mcp_server_parser.add_argument(
+        "--version",
+        choices=["v1", "v2"],
+        default="v2",
+        help="MCP Server version: v1 (original 23 tools) or v2 (redesigned 12 tools, recommended)",
+    )
+    mcp_server_parser.add_argument(
         "--state-root",
         default="~/.lh-harness",
         help="Root directory for task state storage (default: ~/.lh-harness)",
@@ -1232,19 +1238,32 @@ def _mcp_server_command(args: argparse.Namespace) -> int:
 
     logger = logging.getLogger(__name__)
     logger.info(f"Starting LongHorizon-Harness MCP server")
+    logger.info(f"Version: {args.version}")
     logger.info(f"Transport: {args.transport}")
     logger.info(f"State root: {args.state_root}")
 
     # Run the server
     try:
-        from .mcp_server import run_mcp_server
+        if args.version == "v2":
+            from .mcp_server import run_redesigned_mcp_server
 
-        asyncio.run(
-            run_mcp_server(
-                state_root=args.state_root,
-                transport=args.transport,
+            logger.info("Using redesigned architecture (v2) - Claude as main controller")
+            asyncio.run(
+                run_redesigned_mcp_server(
+                    state_root=args.state_root,
+                    transport=args.transport,
+                )
             )
-        )
+        else:
+            from .mcp_server import run_mcp_server
+
+            logger.info("Using original architecture (v1) - Full task management")
+            asyncio.run(
+                run_mcp_server(
+                    state_root=args.state_root,
+                    transport=args.transport,
+                )
+            )
         return 0
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

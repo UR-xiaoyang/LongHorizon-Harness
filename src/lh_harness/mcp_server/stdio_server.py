@@ -164,6 +164,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+_MISSING = object()
+
+
 class LongHorizonMCPServer:
     """Serve the harness's run lifecycle over MCP.
 
@@ -233,6 +236,41 @@ class LongHorizonMCPServer:
         # ControlBus takes the run directory and appends "control" itself.
         return ControlBus(self._require_run(run_id))
 
+    def _required_string(self, arguments: dict[str, Any], name: str) -> str:
+        """Return a non-empty string tool argument without coercing JSON values."""
+
+        value = arguments.get(name)
+        if not isinstance(value, str):
+            raise MCPToolError(f"{name} must be a string")
+        value = value.strip()
+        if not value:
+            raise MCPToolError(f"{name} is required")
+        return value
+
+    def _optional_string(
+        self, arguments: dict[str, Any], name: str, *, default: str | None = None
+    ) -> str | None:
+        """Return an optional string tool argument without coercing JSON values."""
+
+        value = arguments.get(name, _MISSING)
+        if value is _MISSING:
+            return default
+        if not isinstance(value, str):
+            raise MCPToolError(f"{name} must be a string")
+        return value
+
+    def _optional_positive_integer(self, arguments: dict[str, Any], name: str) -> int | None:
+        """Return an optional positive integer tool argument without coercion."""
+
+        value = arguments.get(name)
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise MCPToolError(f"{name} must be an integer")
+        if value < 1:
+            raise MCPToolError(f"{name} must be at least 1")
+        return value
+
     async def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run a blocking supervisor call off the event loop."""
 
@@ -245,29 +283,23 @@ class LongHorizonMCPServer:
     async def start_run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Start a run through the supervisor and return its real record."""
 
-        task = str(arguments.get("task") or "").strip()
-        if not task:
-            raise MCPToolError("task is required")
-        max_rounds = arguments.get("max_rounds")
-        if max_rounds is not None:
-            max_rounds = int(max_rounds)
+        task = self._required_string(arguments, "task")
+        max_rounds = self._optional_positive_integer(arguments, "max_rounds")
         created = await self._call(
             self.supervisor.create_run,
             task=task,
-            workspace=arguments.get("workspace"),
-            agent=str(arguments.get("agent") or "claude_code"),
-            model=arguments.get("model"),
+            workspace=self._optional_string(arguments, "workspace"),
+            agent=self._optional_string(arguments, "agent", default="claude_code"),
+            model=self._optional_string(arguments, "model"),
             max_rounds=max_rounds if max_rounds is not None else _default_max_rounds(),
-            idempotency_key=arguments.get("idempotency_key"),
+            idempotency_key=self._optional_string(arguments, "idempotency_key"),
         )
         return {"run_id": str(created.get("id")), "run": created}
 
     async def run_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Read the supervisor's view of a run."""
 
-        run_id = str(arguments.get("run_id") or "").strip()
-        if not run_id:
-            raise MCPToolError("run_id is required")
+        run_id = self._required_string(arguments, "run_id")
         self._require_run(run_id)
         status = await self._call(self.supervisor.status, run_id)
         return {"run_id": run_id, "status": status}
@@ -275,9 +307,7 @@ class LongHorizonMCPServer:
     async def stop_run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Request a stop and return the supervisor's receipt."""
 
-        run_id = str(arguments.get("run_id") or "").strip()
-        if not run_id:
-            raise MCPToolError("run_id is required")
+        run_id = self._required_string(arguments, "run_id")
         self._require_run(run_id)
         receipt = await self._call(self.supervisor.stop, run_id)
         return {"run_id": run_id, "receipt": receipt}
@@ -285,20 +315,21 @@ class LongHorizonMCPServer:
     async def resume_run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Resume a run and return the supervisor's real outcome."""
 
-        run_id = str(arguments.get("run_id") or "").strip()
-        if not run_id:
-            raise MCPToolError("run_id is required")
-        mode = str(arguments.get("mode") or "continue")
-        extra_rounds = arguments.get("extra_rounds")
-        if extra_rounds is not None:
-            extra_rounds = int(extra_rounds)
+        run_id = self._required_string(arguments, "run_id")
+        mode = arguments.get("mode", "continue")
+        if not isinstance(mode, str):
+            raise MCPToolError("mode must be a string")
+        mode = mode.strip() or "continue"
+        if mode not in {"continue", "retry"}:
+            raise MCPToolError("mode must be continue or retry")
+        extra_rounds = self._optional_positive_integer(arguments, "extra_rounds")
         self._require_run(run_id)
         result = await self._call(
             self.supervisor.resume,
             run_id,
             mode=mode,
             extra_rounds=extra_rounds,
-            idempotency_key=arguments.get("idempotency_key"),
+            idempotency_key=self._optional_string(arguments, "idempotency_key"),
         )
         return {"run_id": run_id, "resumed": result}
 
@@ -309,19 +340,15 @@ class LongHorizonMCPServer:
         appends, so the worker drains it through the same path.
         """
 
-        run_id = str(arguments.get("run_id") or "").strip()
-        if not run_id:
-            raise MCPToolError("run_id is required")
-        instructions = str(arguments.get("instructions") or "").strip()
-        if not instructions:
-            raise MCPToolError("instructions is required")
+        run_id = self._required_string(arguments, "run_id")
+        instructions = self._required_string(arguments, "instructions")
         bus = self._control_bus(run_id)
         try:
             command = bus.append(
                 INJECT_INSTRUCTION_KIND,
                 {"instructions": instructions},
                 created_by=MCP_COMMAND_AUTHOR,
-                command_id=arguments.get("command_id"),
+                command_id=self._optional_string(arguments, "command_id"),
             )
         except Exception as exc:  # surfaced verbatim to the caller
             raise MCPToolError(f"could not queue feedback: {exc}") from exc
@@ -427,6 +454,19 @@ _JSONRPC_INVALID_PARAMS = -32602
 _JSONRPC_INTERNAL_ERROR = -32603
 
 
+def _valid_request_id(value: Any) -> bool:
+    """Return whether a JSON-RPC request id has an allowed JSON type."""
+
+    return value is None or isinstance(value, (str, int, float)) and not isinstance(value, bool)
+
+
+def _invalid_request(request: dict[str, Any]) -> dict[str, Any]:
+    """Return an invalid-request error without echoing an invalid id."""
+
+    request_id = request.get("id") if _valid_request_id(request.get("id")) else None
+    return _error(request_id, _JSONRPC_INVALID_REQUEST, "invalid JSON-RPC request")
+
+
 def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     """Build a JSON-RPC error response."""
 
@@ -450,6 +490,11 @@ async def _dispatch(
 
     if not isinstance(request, dict):
         return _error(None, _JSONRPC_INVALID_REQUEST, "request must be a JSON object")
+
+    if request.get("jsonrpc") != "2.0":
+        return None if "id" not in request else _invalid_request(request)
+    if "id" in request and not _valid_request_id(request["id"]):
+        return _invalid_request(request)
 
     method = request.get("method")
     request_id = request.get("id")

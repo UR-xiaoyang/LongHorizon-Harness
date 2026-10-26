@@ -171,6 +171,30 @@ def _call_sync(server: LongHorizonMCPServer, name: str, **arguments):
     return asyncio.run(server.handle_tool_call(name, arguments))
 
 
+def test_start_run_rejects_a_non_string_task(server):
+    result = _call_sync(server, "lh_start_run", task=["not", "a", "task"])
+    assert result["success"] is False
+    assert "task must be a string" in result["error"]
+
+
+def test_start_run_rejects_a_non_integer_max_rounds(server):
+    result = _call_sync(server, "lh_start_run", task="task", max_rounds="two")
+    assert result["success"] is False
+    assert "max_rounds must be an integer" in result["error"]
+
+
+def test_start_run_rejects_a_non_string_agent(server):
+    result = _call_sync(server, "lh_start_run", task="task", agent={"bad": "agent"})
+    assert result["success"] is False
+    assert "agent must be a string" in result["error"]
+
+
+def test_start_run_rejects_a_null_agent(server):
+    result = _call_sync(server, "lh_start_run", task="task", agent=None)
+    assert result["success"] is False
+    assert "agent must be a string" in result["error"]
+
+
 # -- start -------------------------------------------------------------
 
 
@@ -231,6 +255,12 @@ def test_run_status_requires_a_run_id(server):
     assert "run_id is required" in result["error"]
 
 
+def test_run_status_rejects_a_non_string_run_id(server):
+    result = _call_sync(server, "lh_run_status", run_id=["not", "a", "run-id"])
+    assert result["success"] is False
+    assert "run_id must be a string" in result["error"]
+
+
 # -- feedback ----------------------------------------------------------
 
 
@@ -279,6 +309,14 @@ def test_inject_feedback_replays_under_a_repeated_command_id(server, worker):
     bus = ControlBus(server.runs_root / run_id)
     commands = [c for c in bus.commands() if c["kind"] == INJECT_INSTRUCTION_KIND]
     assert len(commands) == 1, "a repeated command id must not queue twice"
+
+
+def test_inject_feedback_rejects_non_string_instructions(server):
+    result = _call_sync(
+        server, "lh_inject_feedback", run_id="missing", instructions={"bad": "text"}
+    )
+    assert result["success"] is False
+    assert "instructions must be a string" in result["error"]
 
 
 def test_inject_feedback_requires_instructions(server, worker):
@@ -364,6 +402,24 @@ def test_stdio_dispatch_lists_the_tools(server):
     assert names == set(server.tools)
     assert response["id"] == 1
     assert response["jsonrpc"] == "2.0"
+
+
+def test_stdio_dispatch_rejects_a_non_v2_jsonrpc_envelope(server):
+    response = _call_sync_dispatch(server, {"jsonrpc": "1.0", "id": 1, "method": "tools/list"})
+    assert response["error"]["code"] == -32600
+
+
+def test_stdio_dispatch_rejects_a_missing_jsonrpc_version(server):
+    response = _call_sync_dispatch(server, {"id": 1, "method": "tools/list"})
+    assert response["error"]["code"] == -32600
+
+
+def test_stdio_dispatch_rejects_a_non_scalar_request_id(server):
+    response = _call_sync_dispatch(
+        server, {"jsonrpc": "2.0", "id": {"bad": "id"}, "method": "tools/list"}
+    )
+    assert response["error"]["code"] == -32600
+    assert response["id"] is None
 
 
 def _call_sync_dispatch(server, request):
@@ -612,9 +668,12 @@ def test_an_invalid_message_does_not_end_the_session(tmp_path: Path):
 
     invalid_messages = [
         "null",
-        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["invalid"]}),
-        json.dumps({"jsonrpc": "2.0", "id": 2, "method": 42}),
-        json.dumps({"jsonrpc": "2.0", "id": 3}),
+        json.dumps({"jsonrpc": "1.0", "id": 0, "method": "tools/list"}),
+        json.dumps({"id": 1, "method": "tools/list"}),
+        json.dumps({"jsonrpc": "2.0", "id": {"bad": "id"}, "method": "tools/list"}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["invalid"]}),
+        json.dumps({"jsonrpc": "2.0", "id": 3, "method": 42}),
+        json.dumps({"jsonrpc": "2.0", "id": 4}),
     ]
 
     proc = _spawn_cli(tmp_path)

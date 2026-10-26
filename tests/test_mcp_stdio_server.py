@@ -183,6 +183,12 @@ def test_start_run_rejects_a_non_integer_max_rounds(server):
     assert "max_rounds must be an integer" in result["error"]
 
 
+def test_start_run_rejects_a_null_max_rounds(server):
+    result = _call_sync(server, "lh_start_run", task="task", max_rounds=None)
+    assert result["success"] is False
+    assert "max_rounds must be an integer" in result["error"]
+
+
 def test_start_run_rejects_a_non_string_agent(server):
     result = _call_sync(server, "lh_start_run", task="task", agent={"bad": "agent"})
     assert result["success"] is False

@@ -262,8 +262,8 @@ class LongHorizonMCPServer:
     def _optional_positive_integer(self, arguments: dict[str, Any], name: str) -> int | None:
         """Return an optional positive integer tool argument without coercion."""
 
-        value = arguments.get(name)
-        if value is None:
+        value = arguments.get(name, _MISSING)
+        if value is _MISSING:
             return None
         if not isinstance(value, int) or isinstance(value, bool):
             raise MCPToolError(f"{name} must be an integer")
